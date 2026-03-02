@@ -47,6 +47,7 @@ class TaskResponse(BaseModel):
     description: Optional[str]
     status: TaskStatus
     project_id: int
+    project_title: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -68,6 +69,7 @@ class ProjectResponse(BaseModel):
     title: str
     description: Optional[str]
     owner_id: int
+    task_count: int = 0
     created_at: datetime
 
     model_config = {"from_attributes": True}

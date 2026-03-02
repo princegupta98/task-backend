@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import List
 
 from app.database import get_db
@@ -24,11 +24,15 @@ def get_project_or_404(project_id: int, db: Session, user_id: int) -> models.Pro
 def list_projects(
     db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)
 ):
-    return (
+    projects = (
         db.query(models.Project)
         .filter(models.Project.owner_id == current_user.id)
+        .options(joinedload(models.Project.tasks))
         .all()
     )
+    for p in projects:
+        p.task_count = len(p.tasks)
+    return projects
 
 
 @router.post(
@@ -43,7 +47,40 @@ def create_project(
     db.add(project)
     db.commit()
     db.refresh(project)
+    project.task_count = 0
     return project
+
+
+@router.get("/recent-tasks", tags=["Tasks"])
+def get_recent_tasks(
+    limit: int = 5,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    tasks = (
+        db.query(models.Task)
+        .join(models.Project)
+        .filter(models.Project.owner_id == current_user.id)
+        .options(joinedload(models.Task.project))
+        .order_by(models.Task.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    result = []
+    for task in tasks:
+        result.append(
+            schemas.TaskResponse(
+                id=task.id,
+                title=task.title,
+                description=task.description,
+                status=task.status,
+                project_id=task.project_id,
+                project_title=task.project.title,
+                created_at=task.created_at,
+                updated_at=task.updated_at,
+            )
+        )
+    return result
 
 
 @router.get("/{project_id}", response_model=schemas.ProjectWithTasks)
@@ -52,7 +89,18 @@ def get_project(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    return get_project_or_404(project_id, db, current_user.id)
+    project = (
+        db.query(models.Project)
+        .filter(
+            models.Project.id == project_id, models.Project.owner_id == current_user.id
+        )
+        .options(joinedload(models.Project.tasks))
+        .first()
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    project.task_count = len(project.tasks)
+    return project
 
 
 @router.put("/{project_id}", response_model=schemas.ProjectResponse)
@@ -70,6 +118,7 @@ def update_project(
 
     db.commit()
     db.refresh(project)
+    project.task_count = len(project.tasks)
     return project
 
 
